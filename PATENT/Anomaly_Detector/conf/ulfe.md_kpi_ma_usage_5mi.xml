@@ -1,0 +1,538 @@
+<?xml version='1.0' encoding='UTF-8'?>
+
+<pipeline name="md_kpi_ma_usage_5mi" granularity='300' crc="true" mute_version="true">
+    <cpcode path="/ghostcache/home/logger/conf/htp_ma_usage_1dy-cpcodes" />
+    <locals>
+        <value_list name="ASNUM_LIST_KPI" path="/ghostcache/home/logger/conf/media_analytics_kpi_asnums.xml" />
+
+		<value_list name="mcdn_customer_regions" path="/a/share/logger/mdt/lcdndir.network.info/mcdn_customer_regions.conf" />
+		<value_list name="media_brand_name_lookup" path="/a/share/logger/mdt/ddcdir.parser.all/media_analytics_brand_name.xml" />
+        
+		
+		<!--variable name="IS_ASNUM_IN_LIST_KPI" >
+			<expression><![CDATA[lookup_in_list(CLIENT_ORIGIN_AS, ASNUM_LIST_KPI)]]></expression>
+		</variable-->
+        <variable name="PIN_FLAG">
+            <expression><![CDATA[subfield(MPNV(pin), "|", 1)]]></expression>
+        </variable>
+
+        <variable name="PRODUCT_FLAG">
+            <expression><![CDATA[(PIN_FLAG == "amd") ? 1 $ ((PIN_FLAG == "dod") ? 2 $ 0)]]></expression>
+        </variable>
+
+        <variable name="KPI_FILTER">
+            <expression><![CDATA[ (!FF_IS_DEMO_LINE && !FF_IS_ESI_FRAGMENT && FF_IS_AC_SUCCESS && !FF_IS_LOG_MINING && !FF_IS_EDGE_STREAMING &&
+									!FF_IS_PRIVATE_CLIENT_IP && ((MA_PRODUCT_FLAG == 1) || (MA_PRODUCT_FLAG == 2))) &&
+									IS_EDGEHIT && (PRODUCT_FLAG == 1 || PRODUCT_FLAG == 2)]]></expression>
+        </variable>
+
+        <variable name="FILE_SIZE">
+            <expression><![CDATA[LOG_FIELD(f-58|F-29|G-35|r-7|R-7|S-7)]]></expression>
+        </variable>
+
+        <variable name="CONTENT_BYTE_BUCKET">
+            <expression><![CDATA[KPI_FILTER ? ((RESPONSE_BODY_BYTES > 100000 && RESPONSE_BODY_BYTES < 1000000) ? 1 $
+                                  (RESPONSE_BODY_BYTES  >= 1000000) ? 2 $ 0) $ 0]]></expression>
+        </variable>
+
+        <variable name="TOTAL_DOWNLOAD_TIME">
+            <expression><![CDATA[ IS_EDGEHIT  ? 
+                                  (((REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME + RESPONSE_XFER_TIME) > 86400000) ? 0 $ 
+                                    (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME + RESPONSE_XFER_TIME)) $ 0 ]]></expression>
+        </variable>
+
+        <variable name="THROUGHPUT_PER_LOG_LINE">
+            <expression><![CDATA[(KPI_FILTER && TOTAL_DOWNLOAD_TIME != 0) ? ((RESPONSE_BODY_BYTES / TOTAL_DOWNLOAD_TIME ) / 125) $ 0]]></expression>
+        </variable>
+
+        <variable name="THROUGHPUT_PER_LOG_LINE_KbPS">
+            <expression><![CDATA[THROUGHPUT_PER_LOG_LINE * 1000]]></expression>
+        </variable>
+
+        <variable name="CB_THROUGHPUT_BUCKET">
+            <expression><![CDATA[ CONTENT_BYTE_BUCKET == 1 ?  
+                                    ((THROUGHPUT_PER_LOG_LINE >= 0 && THROUGHPUT_PER_LOG_LINE < 1 ) ? 10 $
+                                     (THROUGHPUT_PER_LOG_LINE >= 1 && THROUGHPUT_PER_LOG_LINE < 2 ) ? 11 $ 
+                                     (THROUGHPUT_PER_LOG_LINE >= 2 && THROUGHPUT_PER_LOG_LINE < 5 )  ? 12 $
+                                     (THROUGHPUT_PER_LOG_LINE >= 5 && THROUGHPUT_PER_LOG_LINE < 8 ) ? 15 $
+                                     (THROUGHPUT_PER_LOG_LINE >= 8 && THROUGHPUT_PER_LOG_LINE < 16 ) ? 18 $
+                                     (THROUGHPUT_PER_LOG_LINE >= 16 && THROUGHPUT_PER_LOG_LINE < 35 ) ? 116 $
+                                     (THROUGHPUT_PER_LOG_LINE >= 35 && THROUGHPUT_PER_LOG_LINE < 50 ) ? 135 $
+                                     150 ) $ 
+                                  CONTENT_BYTE_BUCKET == 2 ?
+                                    ((THROUGHPUT_PER_LOG_LINE >= 0 && THROUGHPUT_PER_LOG_LINE < 1 ) ? 20 $
+                                     (THROUGHPUT_PER_LOG_LINE >= 1 && THROUGHPUT_PER_LOG_LINE < 2 ) ? 21 $ 
+                                     (THROUGHPUT_PER_LOG_LINE >= 2 && THROUGHPUT_PER_LOG_LINE < 5 )  ? 22 $
+                                     (THROUGHPUT_PER_LOG_LINE >= 5 && THROUGHPUT_PER_LOG_LINE < 8 ) ? 25 $
+                                     (THROUGHPUT_PER_LOG_LINE >= 8 && THROUGHPUT_PER_LOG_LINE < 16 ) ? 28 $
+                                     (THROUGHPUT_PER_LOG_LINE >= 16 && THROUGHPUT_PER_LOG_LINE < 35 ) ? 216 $
+                                     (THROUGHPUT_PER_LOG_LINE >= 35 && THROUGHPUT_PER_LOG_LINE < 50 ) ? 235 $
+                                      250 ) $ 0
+                               ]]></expression>
+        </variable>
+
+        <variable name="MEDIA_TYPE" >
+            <expression><![CDATA[KPI_FILTER ? subfield(CONTENT_TYPE,"/",0) $ "-"]]></expression>
+        </variable>
+
+        <variable name="SEGMENT_TYPE">
+          <expression><![CDATA[ !(KPI_FILTER) ? 0 $  
+                                 (((MEDIA_TYPE == "audio" || MEDIA_TYPE== "video") || 
+                                   (MA_FILE_EXTENSION == "ts"   || MA_FILE_EXTENSION == "mp4"  || 
+                                    MA_FILE_EXTENSION == "aac"  || MA_FILE_EXTENSION == "m4s"  || 
+                                    MA_FILE_EXTENSION == "flv"  || MA_FILE_EXTENSION == "f4f"  || 
+                                    MA_FILE_EXTENSION == "ac3"  || MA_FILE_EXTENSION == "ec3"  || 
+                                    MA_FILE_EXTENSION == "adts" || MA_FILE_EXTENSION == "sidx" || 
+                                    MA_FILE_EXTENSION == "webm" || MA_FILE_EXTENSION == "divx" || 
+                                    MA_FILE_EXTENSION == "dash" || MA_FILE_EXTENSION == "cmfa" || 
+                                    MA_FILE_EXTENSION == "isma" || MA_FILE_EXTENSION == "cmfv" || 
+                                    MA_FILE_EXTENSION == "ismv" || MA_FILE_EXTENSION == "m4v"  || 
+                                    MA_FILE_EXTENSION == "m4a"  ||  MA_FILE_EXTENSION == "mov" || 
+                                    MA_FILE_EXTENSION == "mp4v" || MA_FILE_EXTENSION == "mp4a" || 
+                                    MA_FILE_EXTENSION == "mp3"  )
+                                    )) ? 1 $ 
+									((MA_FILE_EXTENSION == "m3u8" || MA_FILE_EXTENSION == "m3u" ||
+									  MA_FILE_EXTENSION == "m3ub" || MA_FILE_EXTENSION == "f4m" ||
+									  MA_FILE_EXTENSION == "f4x"  || MA_FILE_EXTENSION == "mpd" ||
+									  MA_FILE_EXTENSION == "ismc") ? 3 $ 2) ]]></expression>
+        </variable>
+
+		<variable name = "BRAND_NAME">
+			<expression><![CDATA[KPI_FILTER ? MA_DEVICE_CHARATERISTICS(brand_name) $ "-"]]></expression>
+		
+		</variable>
+
+    </locals>
+
+    <!--  DIMENSIONS  -->
+
+    <!--  1 --> <key name="RECORDTYPE" >								                  <!-- KPI -->
+                    <value><![CDATA[ "media_delivery_kpi"]]></value>
+                </key>
+    <!--  2 --> <key name="CPCODE"                                 />
+    <!--  3 --> <key name="TIMESTAMP"                              />
+    <!--  4 --> <key name="MA_PRODUCT_FLAG"                        />
+    <!--  5 --> <key name="toint(SERVICE_FLAGS)"                   />	   <!-- USAGE -->
+    <!--  6 --> <key name="_PLACE_HOLDER_ULL_"                     />      <!-- KPI -->
+    <!--  7 --> <key name="CITY">	                                       <!-- USAGE -->
+                    <value><![CDATA[FF_IS_GEO_A_CITY ? FF_CLIENT_GEO_NAME $ "-"]]></value>
+                </key>
+    <!--  8 --> <key name="_PLACE_HOLDER_STR_"                     />      <!-- KPI -->
+
+    <!--  9 --> <key name="COUNTRY">
+                    <value><![CDATA[ FF_CLIENT_COUNTRY_GEO ==10000 || FF_CLIENT_COUNTRY_GEO ==10001 ? FF_CLIENT_COUNTRY_GEO $ FF_CLIENT_GEO_V1]]></value>
+                </key>
+    <!-- 10 --> <key name="FF_MA_LOOKUP_BASED_CLIENT_BROWSER"      />
+    <!-- 11 --> <key name="FF_MA_LOOKUP_BASED_CLIENT_OS"           />
+    <!-- 12 --> <key name="FF_MA_LOOKUP_BASED_CLIENT_NETWORK_TYPE" />	   <!-- USAGE -->
+    <!-- 13 --> <key name="_PLACE_HOLDER_STR_"                     />	   <!-- KPI -->
+    <!-- 14 --> <key name="_PLACE_HOLDER_STR_"                     />	   <!-- akacustom -->
+    <!-- 15 --> <key name="ERROR_FLAG" >	                               <!-- USAGE -->
+                    <value><![CDATA[toint(SUCCESS_HITS ? 0 $ 1)]]></value>
+                </key>
+    <!-- 16 --> <key name="_PLACE_HOLDER_ULL_"                    /> 		<!-- KPI -->
+    <!-- 17 --> <key name="CLIENT_ORIGIN_AS">                               <!-- USAGE -->
+                    <value><![CDATA[toint((IS_F_LINE || (CLIENT_ORIGIN_AS == 0)) ? 0 $ 
+                                           lookup_in_list(CLIENT_ORIGIN_AS, ASNUM_LIST_KPI) ? CLIENT_ORIGIN_AS $ 
+                                           65535)]]></value>
+                </key>
+    <!-- 18 --> <key name="CLIENT_ORIGIN_AS_KPI" >                          <!-- KPI -->
+                    <value><![CDATA[toint((IS_F_LINE || (CLIENT_ORIGIN_AS == 0) || (TOTAL_EGRESS_COUNT == 0))? 0 $ 
+                                          lookup_in_list(CLIENT_ORIGIN_AS, ASNUM_LIST_KPI) ? CLIENT_ORIGIN_AS $ 
+                                          65535)]]></value>
+                </key>
+    <!-- 19 --> <key name="CLIENT_STATE_GEO" >		                       <!-- USAGE -->
+                    <value><![CDATA[tostring((FF_CLIENT_COUNTRY_GEO ==10000 || FF_CLIENT_COUNTRY_GEO ==10001) ? (FF_CLIENT_STATE_GEO == 0 ? FF_CLIENT_GEO_V1 $ FF_CLIENT_STATE_GEO) $ "-")]]></value>
+                </key>
+    
+	<!-- 20 --> <key name="KPI_CLIENT_GEO_ID"                    > 		   <!-- KPI -->
+	                <value><![CDATA[KPI_FILTER ? tolong(CLIENT_GEO_ID) $ tolong(0)]]></value>
+				</key>
+    <!-- 21 --> <key name="FILE_SIZE_BUCKET"                     >		   <!-- USAGE -->
+            		<value><![CDATA[(FILE_SIZE < 0 ? "-" $
+                                  (FILE_SIZE >=         0 && FILE_SIZE <       1000) ?  "0-1KB"      $
+                                  (FILE_SIZE >=      1000 && FILE_SIZE <      10000) ?  "1KB-10KB"   $
+                                  (FILE_SIZE >=     10000 && FILE_SIZE <     100000) ?  "10KB-100KB" $
+                                  (FILE_SIZE >=    100000 && FILE_SIZE <    1000000) ?  "100KB-1MB"  $
+                                  (FILE_SIZE >=   1000000 && FILE_SIZE <   10000000) ?  "1MB-10MB"   $
+                                  (FILE_SIZE >=  10000000 && FILE_SIZE <  100000000) ?  "10MB-100MB" $
+                                  (FILE_SIZE >= 100000000 && FILE_SIZE < 1000000000) ?  "100MB-1GB"  $
+                                  ">1GB" )]]></value>
+				</key>
+
+    <!-- 22 --> <key name="_PLACE_HOLDER_STR_"                  /> 		   <!-- KPI -->
+    <!-- 23 --> <key name="CLIENT_CONTINENT_ID"                 /> 		   <!-- KPI -->
+    <!-- 24 --> <key name="MAP_RULE"                             >		   <!-- KPI -->
+	                <value><![CDATA[TOTAL_EGRESS_COUNT ? MAP_RULE $ "-"]]></value>
+				</key>
+    <!-- 25 --> <key name="DELIVERY_FORMAT" >		                       <!-- KPI -->
+                    <value><![CDATA[ KPI_FILTER ? ((SERVICE_FLAGS & 0x2000000 == 0x2000000) ? 4 $
+                                     (SERVICE_FLAGS & 0x40000 == 0x40000) ? 3 $  
+                                     (SERVICE_FLAGS & 0x20000 == 0x20000) ? 2 $ 
+                                     (SERVICE_FLAGS & 0x10000 == 0x10000 || SERVICE_FLAGS & 0x80000 == 0x80000)  ? 1 $ 0) $ 0]]></value>
+                    <!-- Delivery format 
+                        OTHERS = 0
+                        HLS = 1
+                        HDS = 2
+                        SMOOTH = 3
+                        DASH = 4
+                        -->
+                </key>
+    <!-- 26 --> <key name="DELIVERY_TYPE" >		                           <!-- KPI -->
+                    <value><![CDATA[PRODUCT_FLAG == 1 ? ((SERVICE_FLAGS & 0x400 == 0x400 ) ? 1 $ 2 ) $ 3]]></value> 
+                    <!-- Deliver type  
+                         Live = 1 
+                         Vod = 2
+                         Downloads = 3 
+                         -->
+                </key>
+
+    <!-- 27 --> <key name="ISCHUNKEDTRANSFER" >		               <!-- KPI -->
+                    <value><![CDATA[KPI_FILTER ? (MPNV(chk) != "-" ? 1 $ 0) $ 0]]></value>
+                </key>
+    <!-- 28 --> <key name="IS_AMD_DD_LEGACY" >
+                    <value><![CDATA[(!PRODUCT_FLAG) ? 1 $ 0]]></value>
+                </key>
+    <!-- 29 --> <key name="DMA"                                  > <!-- KPI -->
+                    <value><![CDATA[KPI_FILTER ? tolong(dma_rad_tree_get(CLIENT_IP)) $ tolong(0)]]></value>
+				</key>
+    <!-- 30 --> <key name="DOWNLOAD_TYPE"                        > <!-- KPI -->
+	                <value><![CDATA[(KPI_FILTER && PRODUCT_FLAG == 2) ? ((MPNV(ucb) != "-" && subfield(MPNV(ucb), "/", 3) == "foreground-download") ? 1 $ 2) $ 0]]></value>
+				</key>
+    <!-- 31 --> <key name="_PLACE_HOLDER_ULL_"                  /> <!-- future use -->
+    <!-- 32 --> <key name="DELIVERY_PROTOCOL"                    > <!-- KPI -->
+	                <value><![CDATA[KPI_FILTER ? ((SERVICE_FLAGS == 0) ? "1" $
+					                (SERVICE_FLAGS & 0x4000000 == 0x4000000) ? "3" $
+									(SERVICE_FLAGS & 0x800000 == 0x800000) ? "2" $
+                                    (SERVICE_FLAGS & 0x1 == 0x1) ? "4" $ "0") $ "0"]]></value>
+				</key>
+				<!-- 	HTTP/1.1	:: 1 
+						HTTP/3  	:: 3
+						HTTP/2		:: 2
+						HTTPS/1.1	:: 4 
+						Other/ Default	:: 0	-->
+
+    <!-- 33 --> <key name="KPI_HOST_HEADER"                          > <!-- KPI -->
+	                <value><![CDATA[KPI_FILTER ? HOST_HEADER_SANITIZED $ "-"]]></value>
+				</key>
+    <!-- 34 --> <key name="OBJECT_TYPE"                          > <!-- KPI -->
+	                <value><![CDATA[(SEGMENT_TYPE == 1) ? "SEGMENT" $ ((SEGMENT_TYPE == 3) ? "MANIFEST") $ "OTHERS"]]></value>
+				</key>
+    <!-- 35 --> <key name="MCDN_REGION_ID"                       > <!-- KPI -->
+	                <value><![CDATA[(KPI_FILTER && exists_in_list(tostring(GHOST_REGION), mcdn_customer_regions)) ? tostring(GHOST_REGION)  $ "0"]]></value>
+				</key>
+    <!-- 36 --> <key name="DEVICE_BRAND_NAME"                  > <!-- future use -->
+			        <value><![CDATA[KPI_FILTER ? (lookup_in_list(BRAND_NAME, media_brand_name_lookup) ? BRAND_NAME $ "-") $ "-"]]></value>
+		        </key>
+    <!-- 37 --> <key name="DEVICE_TYPE"       					 > <!-- KPI -->
+					<value><![CDATA[KPI_FILTER ? MA_CLIENT_DEVICE(Device_Type) $ "-"]]></value>
+				</key>
+    <!-- 38 --> <key name="_PLACE_HOLDER_STR_"                  /> <!-- KPI -->
+    <!-- 39 --> <key name="_PLACE_HOLDER_STR_"                  /> <!-- future use -->
+    <!-- 40 --> <key name="_PLACE_HOLDER_STR_"                  /> <!-- future use -->
+    <!-- 41 --> <key name="_PLACE_HOLDER_STR_"                  /> <!-- future use -->
+
+    <!--  METRICS  -->
+    <!-- 42 -->   <data name="TOTAL_DOWNLOAD_TIME"                    aggregation="SUM"    />
+    <!-- 43 -->   <data name="TOTAL_BYTES"                            aggregation="SUM"    />
+    <!-- 44 -->   <data name="_PLACE_HOLDER_ULL_"                     aggregation="SUM"    />
+    <!-- 45 -->   <data name="TOTAL_EGRESS_COUNT"                     aggregation="SUM"    />
+    <!-- 46 -->   <data name="EGRESS_OBJBYTE"                         aggregation="SUM"    />
+    <!-- 47 -->   <data name="EGRESS_OVERBYTE"                        aggregation="SUM"    />
+    <!-- 48 -->   <data name="EGRESS_CACHEBYTE"                       aggregation="SUM"     >
+                      <value><![CDATA[IS_CACHEHIT ? TOTAL_EGRESS_BYTE $ 0]]></value>
+                  </data>
+    <!-- 49 -->   <data name="TOTAL_EGRESS_SECUREBYTE"                aggregation="SUM"    />
+    <!-- 50 -->   <data name="TOTAL_MIDGRESS_COUNT"                   aggregation="SUM"    />
+    <!-- 51 -->   <data name="MIDGRESS_OBJBYTE"                       aggregation="SUM"    />
+    <!-- 52 -->   <data name="MIDGRESS_OVERBYTE"                      aggregation="SUM"    />
+    <!-- 53 -->   <data name="TOTAL_ORIGIN_COUNT"                     aggregation="SUM"    />
+    <!-- 54 -->   <data name="ORIGIN_OBJBYTE"                         aggregation="SUM"     >
+                      <value><![CDATA[(INGRESS_OBJBYTE && !contains_any_of(OBJECT_STATUS, "N")) ? INGRESS_OBJBYTE $ 0]]></value>
+                  </data>
+    <!-- 55 -->   <data name="ORIGIN_OVERBYTE"                        aggregation="SUM"    >
+                      <value><![CDATA[(INGRESS_OVERBYTE && !contains_any_of(OBJECT_STATUS, "N")) ? INGRESS_OVERBYTE $ 0]]></value>
+                  </data>
+    <!-- 56 -->   <data name="SUCCESS_FIRSTBYTE_HITS"                 aggregation="SUM"    >
+                      <value><![CDATA[(FIRSTBYTE_HITS && ((STATUS_CODE == 200) || (STATUS_CODE == 206) || (STATUS_CODE == 304))) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 57 -->   <data name="DOWNLOADS_COMPLETED"                    aggregation="SUM"    />
+    <!-- 58 -->   <data name="STARTUP_ERROR"                          aggregation="SUM"     >
+                      <value><![CDATA[(FIRSTBYTE_HITS - DOWNLOADS_INITIATED)]]></value>
+                  </data>
+    <!-- 59 -->   <data name="HITS_000"                               aggregation="SUM">
+                     <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE == 0)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 60 -->   <data name="HITS_200"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE == 200)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 61 -->   <data name="HITS_206"                               aggregation="SUM">
+                     <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE == 206)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 62 -->   <data name="HITS_2XX"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && ((STATUS_CODE >= 200) && (STATUS_CODE < 300))) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 63 -->   <data name="HITS_302"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE == 302)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 64 -->   <data name="HITS_304"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE == 304)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 65 -->   <data name="HITS_3XX"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE >= 300) && (STATUS_CODE < 400)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 66 -->   <data name="HITS_404"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE == 404)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 67 -->   <data name="HITS_415"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE == 415)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 68 -->   <data name="HITS_403"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE == 403)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 69 -->   <data name="HITS_4XX"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE >= 400) && (STATUS_CODE < 500)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 70 -->   <data name="HITS_5XX"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && (STATUS_CODE >= 500) && (STATUS_CODE < 600)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 71 -->   <data name="HITS_XXX"                               aggregation="SUM">
+                      <value><![CDATA[(IS_EDGEHIT && ((STATUS_CODE < 200) || (STATUS_CODE > 599)) && (STATUS_CODE != 0)) ? 1 $ 0]]></value>
+                  </data>
+    <!-- 72 -->   <data name="_PLACE_HOLDER_ULL_"                     aggregation="SUM"     />
+    <!-- 73 -->   <data name="ERROR_404_OBJBYTES"                     aggregation="SUM"     >
+                      <value><![CDATA[(STATUS_CODE == 404) ? EGRESS_OBJBYTE $ 0]]></value>
+                  </data>
+    <!-- 74 -->   <data name="ERROR_404_OVERBYTES"                     aggregation="SUM"     >
+                      <value><![CDATA[(STATUS_CODE == 404) ? EGRESS_OVERBYTE $ 0]]></value>
+                  </data>
+    <!-- 75 -->   <data name="TOTAL_NETSTORAGE_COUNT"                 aggregation="SUM"    />
+    <!-- 76 -->   <data name="TOTAL_NETSTORAGE_BYTE"                  aggregation="SUM"    />
+    <!-- 77 -->   <data name="AMD_PLAYOUT_TIME"                       aggregation="SUM"    > <!-- spare metric1 for amd_playout_time -->
+                      <value><![CDATA[(MA_PRODUCT_FLAG == 1) ? PLAYOUT_TIME $ 0]]></value>
+                  </data>
+    <!-- 78 -->   <data name="CONTENT_BYTES"                     		aggregation="SUM"  > 
+                      <value><![CDATA[(KPI_FILTER) ? RESPONSE_BODY_BYTES $ 0]]></value>
+                  </data>
+    <!-- 79 -->   <data name="TOTAL_EDGE_BYTES"                     aggregation="SUM"    > 
+                      <value><![CDATA[IS_EDGEHIT ? HTTP_RESPONSE_BYTES $ 0]]></value>
+                  </data>
+    <!-- 80 -->   <data name="5XXEdgeHits_NegativeCached">
+                     <value><![CDATA[(IS_EDGEHIT  && STATUS_CODE >= 500  && STATUS_CODE < 600) && contains(OBJECT_STATUS, "n")]]></value>
+                  </data>
+    <!-- 81 -->   <data name="TPUT_100KB_1MB">
+                     <value><![CDATA[CONTENT_BYTE_BUCKET == 1 ? THROUGHPUT_PER_LOG_LINE_KbPS $ 0]]></value>
+                  </data>
+    <!-- 82 -->   <data name="TPUTSQ_100KB_1MB">
+                      <value><![CDATA[CONTENT_BYTE_BUCKET == 1 ? ( THROUGHPUT_PER_LOG_LINE_KbPS * THROUGHPUT_PER_LOG_LINE_KbPS ) $ 0]]></value>
+                  </data>
+    <!-- 83 -->   <data name="TPUT_GT_1MB">
+                      <value><![CDATA[CONTENT_BYTE_BUCKET == 2 ?  THROUGHPUT_PER_LOG_LINE_KbPS  $ 0]]></value>
+                  </data>
+    <!-- 84 -->   <data name="TPUTSQ_GT_1MB">
+                     <value><![CDATA[CONTENT_BYTE_BUCKET == 2 ? ( THROUGHPUT_PER_LOG_LINE_KbPS * THROUGHPUT_PER_LOG_LINE_KbPS ) $ 0]]></value>
+                  </data>
+    <!-- 85 -->   <data name="HITS_100KB_1MB">
+                      <value><![CDATA[CONTENT_BYTE_BUCKET == 1 ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 86 -->   <data name="HITS_GT_1MB">
+                      <value><![CDATA[CONTENT_BYTE_BUCKET == 2 ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 87 -->   <data name="HITS_TPUT_0_1Mbps_CB_100KB_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 10) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 88 -->   <data name="HITS_TPUT_1_2Mbps_CB_100KB_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 11) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 89 -->   <data name="HITS_TPUT_2_5Mbps_CB_100KB_1MB">
+                     <value><![CDATA[(CB_THROUGHPUT_BUCKET == 12) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 90 -->   <data name="HITS_TPUT_5_8Mbps_CB_100KB_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 15) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 91 -->   <data name="HITS_TPUT_8_16Mbps_CB_100KB_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 18) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 92 -->   <data name="HITS_TPUT_16_35Mbps_CB_100KB_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 116) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 93 -->   <data name="HITS_TPUT_35_50Mbps_CB_100KB_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 135) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 94 -->   <data name="HITS_TPUT_GT_50Mbps_CB_100KB_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 150) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 95 -->   <data name="HITS_TPUT_0_1Mbps_CB_GT_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 20) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 96 -->   <data name="HITS_TPUT_1_2Mbps_CB_GT_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 21) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 97 -->   <data name="HITS_TPUT_2_5Mbps_CB_GT_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 22) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 98 -->   <data name="HITS_TPUT_5_8Mbps_CB_GT_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 25) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 99 -->   <data name="HITS_TPUT_8_16Mbps_CB_GT_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 28) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--100 -->   <data name="HITS_TPUT_16_35Mbps_CB_GT_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 216) ? 1 $ 0 ]]></value>
+                  </data>            
+    <!-- 101 -->  <data name="HITS_TPUT_35_50Mbps_CB_GT_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 235) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 102 -->  <data name="HITS_TPUT_GT_50Mbps_CB_GT_1MB">
+                      <value><![CDATA[(CB_THROUGHPUT_BUCKET == 250) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 103 -->  <data name="RQST_READ_TIME"   aggregation="SUM"        >
+                       <value><![CDATA[IS_EDGEHIT ? REQUEST_HEADER_READ_TIME $ 0]]></value>
+                  </data>
+    <!-- 104 -->  <data name="MSG_TURNARND_TIME"   aggregation="SUM"        >
+                      <value><![CDATA[IS_EDGEHIT ? (MSG_TURNAROUND_TIME > 86400000 ? 0 $ MSG_TURNAROUND_TIME) $ 0]]></value>
+                  </data>
+    <!-- 105 -->  <data name="RESPONSE_XFR_TIME"   aggregation="SUM"        >
+                       <value><![CDATA[IS_EDGEHIT ? (RESPONSE_XFER_TIME > 86400000 ? 0 $ RESPONSE_XFER_TIME) $ 0]]></value>
+                  </data>
+    <!-- 106 -->  <data name="STT_SEGMENT_1s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 1000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 107 -->  <data name="STT_SEGMENT_2s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 2000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 108 -->  <data name="STT_SEGMENT_3s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 3000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--107 -->   <data name="STT_SEGMENT_4s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 4000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--110 -->   <data name="STT_SEGMENT_5s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 5000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--111 -->   <data name="STT_SEGMENT_6s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 6000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--112 -->   <data name="STT_SEGMENT_7s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 7000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--113 -->   <data name="STT_SEGMENT_8s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 8000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--114 -->   <data name="STT_SEGMENT_9s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 9000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--115 -->   <data name="STT_SEGMENT_10s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 10000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--116 -->   <data name="STT_SEGMENT_11s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 11000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--117 -->   <data name="STT_SEGMENT_12s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 12000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--118 -->   <data name="STT_SEGMENT_13s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 13000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--119 -->   <data name="STT_SEGMENT_14s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 14000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--120 -->   <data name="STT_SEGMENT_15s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 15000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--121 -->   <data name="STT_NONSEGMENT_1s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 1000 ) ? 1 $ 0 ]]></value>
+                  </data> 
+    <!--122 -->   <data name="STT_NONSEGMENT_2s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 2000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--123 -->   <data name="STT_NONSEGMENT_3s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 3000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--124 -->   <data name="STT_NONSEGMENT_4s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 4000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--125 -->   <data name="STT_NONSEGMENT_5s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 5000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--126 -->   <data name="STT_NONSEGMENT_6s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 6000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--127 -->   <data name="STT_NONSEGMENT_7s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 7000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--128 -->   <data name="STT_NONSEGMENT_8s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 8000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--129 -->   <data name="STT_NONSEGMENT_9s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 9000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--130 -->   <data name="STT_NONSEGMENT_10s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 10000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--131 -->   <data name="STT_NONSEGMENT_11s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 11000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--132 -->   <data name="STT_NONSEGMENT_12s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 12000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--133 -->   <data name="STT_NONSEGMENT_13s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 13000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--134 -->   <data name="STT_NONSEGMENT_14s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 14000 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!--135 -->   <data name="STT_NONSEGMENT_15s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 15000 ) ? 1 $ 0 ]]></value>
+                  </data> 
+    <!-- 136 -->  <data name="STT_SEGMENT_0s">
+                      <value><![CDATA[(SEGMENT_TYPE == 1 && TOTAL_DOWNLOAD_TIME >= 0 ) ? 1 $ 0 ]]></value>
+                  </data>
+    <!-- 137 -->  <data name="STT_NONSEGMENT_0s">
+                      <value><![CDATA[(SEGMENT_TYPE != 1 && SEGMENT_TYPE != 0 && TOTAL_DOWNLOAD_TIME >= 0 ) ? 1 $ 0 ]]></value>
+                  </data> 
+    <!--138 -->   <data name="TIME_TO_FIRST_BYTE_0ms"                  aggregation="SUM"     	>
+	                  <value><![CDATA[((IS_EDGEHIT && PRODUCT_FLAG == 2) && (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) >= 0 &&
+				                      (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) < 5) ? 1 $ 0]]></value>
+				  </data>
+    <!--139 -->   <data name="TIME_TO_FIRST_BYTE_5ms"                     aggregation="SUM"  	> 
+	                  <value><![CDATA[((IS_EDGEHIT && PRODUCT_FLAG == 2) && (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) >= 5 &&
+				                      (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) < 10) ? 1 $ 0]]></value>
+				  </data>
+    <!--140 -->   <data name="TIME_TO_FIRST_BYTE_10ms"                     aggregation="SUM" 	> 
+	                  <value><![CDATA[((IS_EDGEHIT && PRODUCT_FLAG == 2) && (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) >= 10 &&
+				                      (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) < 50) ? 1 $ 0]]></value>
+				  </data>
+    <!--141 -->   <data name="TIME_TO_FIRST_BYTE_50ms"                     aggregation="SUM" 	> 
+	                  <value><![CDATA[((IS_EDGEHIT && PRODUCT_FLAG == 2) && (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) >= 50 &&
+				                      (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) < 100) ? 1 $ 0]]></value>
+				  </data>
+    <!--142 -->   <data name="TIME_TO_FIRST_BYTE_100ms"                     aggregation="SUM"	> 
+	                  <value><![CDATA[((IS_EDGEHIT && PRODUCT_FLAG == 2) && (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) >= 100 &&
+				                      (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) < 200) ? 1 $ 0]]></value>
+				  </data>
+    <!--143 -->   <data name="TIME_TO_FIRST_BYTE_200ms"                     aggregation="SUM"    >
+	                  <value><![CDATA[((IS_EDGEHIT && PRODUCT_FLAG == 2) && (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) >= 200 &&
+				                      (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) < 500) ? 1 $ 0]]></value>
+				  </data>
+    <!--144 -->   <data name="TIME_TO_FIRST_BYTE_500ms"                     aggregation="SUM"    >
+	                  <value><![CDATA[(IS_EDGEHIT && PRODUCT_FLAG == 2) && (REQUEST_HEADER_READ_TIME + MSG_TURNAROUND_TIME) >= 500 ? 1 $ 0]]></value>
+				  </data>
+    <!--145 -->   <data name="TPUT_SQ_GT_1MB_Mbps"                    aggregation="SUM"     >
+                     <value><![CDATA[CONTENT_BYTE_BUCKET == 2 ? ((THROUGHPUT_PER_LOG_LINE_KbPS / 1000) * (THROUGHPUT_PER_LOG_LINE_KbPS / 1000)) $ 0]]></value>
+                  </data>
+    <!--146 -->   <data name="_PLACE_HOLDER_ULL_"                     aggregation="SUM"    /> <!-- future use -->
+    <!--147 -->   <data name="_PLACE_HOLDER_ULL_"                     aggregation="SUM"    /> <!-- future use -->
+    <!--148 -->   <data name="_PLACE_HOLDER_ULL_"                     aggregation="SUM"    /> <!-- future use -->
+    <!--149 -->   <data name="_PLACE_HOLDER_ULL_"                     aggregation="SUM"    /> <!-- future use -->
+
+    <!--  FILTER  -->
+    <select><![CDATA[ !FF_IS_DEMO_LINE         &&
+                      !FF_IS_ESI_FRAGMENT      &&
+                      FF_IS_AC_SUCCESS         &&
+                      !FF_IS_LOG_MINING        &&
+                      !FF_IS_EDGE_STREAMING    &&
+                      !FF_IS_PRIVATE_CLIENT_IP &&
+                      ((MA_PRODUCT_FLAG == 1) || (MA_PRODUCT_FLAG == 2))]]></select>
+
+</pipeline>

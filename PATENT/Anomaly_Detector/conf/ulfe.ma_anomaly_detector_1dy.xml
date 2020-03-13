@@ -1,0 +1,360 @@
+<?xml version='1.0' encoding='UTF-8'?>
+
+<pipeline name="ma_anomaly_detector_1dy" granularity='86400' crc="true" mute_version='true' mute_timestamp='true' output_policy="DUMP" mute_cpcode='true'>
+
+    <locals>
+
+		<value_list name="SAMPLING_LIST" path="/a/share/logger/mdt/ddcdir.netmon.conf/ma_boss_r_sampling_values.conf" />
+
+        <variable name="HTTP_METHD"> 
+            <expression><![CDATA[ LOG_FIELD(r-11|S-11) ]]></expression>
+        </variable>
+
+		<variable name="EGRESS_BASIC_CHECK">
+            <expression><![CDATA[ (IS_R_LINE    
+                                && (FF_AKA_NETWORK == 0 || FF_AKA_NETWORK == 11)
+								&& ( HTTP_METHD == "GET" || HTTP_METHD == "HEAD" )) ]]></expression>
+		</variable> 
+
+		<variable name="SAMPLING_VALUES">
+            <expression><![CDATA[ ( EGRESS_BASIC_CHECK && exists_in_list(CPCODE, SAMPLING_LIST) ? 
+                                lookup_in_list(CPCODE, SAMPLING_LIST) $ "10:1:0:0" ) ]]></expression>
+        </variable>
+
+        <!--
+            The first field indicates the sampling rate.
+            The second field indicates the which traffic to capture 
+            i.e.  egress/midgress/all where  egress == 1, midgress == 2  and all == 3
+            The third field indicates whether to switch on loopback request. if 1 == ON , and 0 == OFF. 
+            The fourth field indicates the whether to switch on sureroute request. if 1 == On and  0  == OFF.
+        -->  
+
+        <variable name="TRAFFIC_TYPE">
+            <expression><![CDATA[ toint(subfield(SAMPLING_VALUES,":",1)) ]]></expression>
+        </variable>
+
+		<variable name="TRAFFIC_TO_CAPTURE">
+            <expression><![CDATA[ !EGRESS_BASIC_CHECK ? 0
+                                $ TRAFFIC_TYPE == 3 ? 1
+								$ TRAFFIC_TYPE == 2 ? IS_MIDGRESS_TRAFFIC
+								$ IS_EGRESS_TRAFFIC ]]></expression>
+        </variable>
+
+        <variable name="CAPTURE_LOOPBACK_TRAFFIC">
+            <expression><![CDATA[ TRAFFIC_TO_CAPTURE ? toint(subfield(SAMPLING_VALUES,":",2)) == 1 $ 0 ]]></expression>
+        </variable>
+
+        <variable name="IS_IP_LOOPBACK">
+            <expression><![CDATA[ FF_CLIENT_IP == 127.0.0.1 ]]></expression>
+        </variable>
+
+        <variable name="ENABLE_SOUREROUTE_CHECK">
+            <expression><![CDATA[ TRAFFIC_TO_CAPTURE ? toint(subfield(SAMPLING_VALUES,":",3)) == 1 $ 0 ]]></expression>
+        </variable>
+
+        <variable name="EGRESS_FILTERED_CPCODE">
+            <expression><![CDATA[ TRAFFIC_TO_CAPTURE
+                                    && (CAPTURE_LOOPBACK_TRAFFIC || (!CAPTURE_LOOPBACK_TRAFFIC && !IS_IP_LOOPBACK ))
+                                    && (ENABLE_SOUREROUTE_CHECK || (!ENABLE_SOUREROUTE_CHECK 
+                                        &&  !(regex_match(ARL,"sureroute-race") || regex_match(ARL,"sureroute-test-object")))) 
+                                    ? FF_CPCODE $ 0 ]]></expression>
+        </variable>
+
+        <variable name="SAMPLING_RATE">
+            <expression><![CDATA[ EGRESS_FILTERED_CPCODE ? toint(subfield(SAMPLING_VALUES,":",0)) $ 0 ]]></expression>
+        </variable>
+
+
+		 <variable name="OUTPUT_PIPELINE">
+            <expression><![CDATA[1]]></expression>
+         </variable>
+
+        <variable name="IS_MIDGRESS">
+            <expression><![CDATA[ contains_any_of(OBJECT_STATUS,"GP") ]]></expression>
+        </variable>
+
+		<variable name="GEO_INFO">
+			<expression><![CDATA[ OUTPUT_PIPELINE && !IS_MIDGRESS ? FF_CLIENT_NETWORK_DETAILS $ "-" ]]></expression>
+        </variable>
+
+		<variable name="CLIENT_COUNTRY">
+			<expression><![CDATA[ !IS_MIDGRESS ? subfield(GEO_INFO,":",0) $ "-" ]]></expression>
+        </variable>
+
+		<variable name="CLIENT_STATE">
+			<expression><![CDATA[ !IS_MIDGRESS ? subfield(GEO_INFO,":",1) $ "-" ]]></expression>
+        </variable>
+
+		<variable name="CLIENT_CONTINENT">
+			<expression><![CDATA[ !IS_MIDGRESS ? subfield(GEO_INFO,":",2) $ "-" ]]></expression>
+        </variable>
+
+        <variable name="ERROR_MESSAGE">
+			<expression><![CDATA[ subfield((LOG_FIELD(r-14|S-31)),"|",0) ]]></expression>
+        </variable>
+
+        <variable name="ARL"> 
+            <expression><![CDATA[ LOG_FIELD(r-12|S-30) ]]></expression>
+        </variable>
+        
+        <variable name="ARL_CONTAINS_LIVE"> 
+            <expression><![CDATA[ OUTPUT_PIPELINE && regex_match(ARL,"hls\/live|\/hds\/live|\/dash\/live/") ]]></expression>
+        </variable>
+        
+        <variable name="ARL_CONTAINS_POLICYMAP"> 
+            <expression><![CDATA[ ARL_CONTAINS_LIVE && regex_match(ARL, "policy_map\.esi") ]]></expression>
+        </variable>
+        
+		<variable name="STREAMID_INDEX">
+			<expression><![CDATA[ ARL_CONTAINS_POLICYMAP ? 3 $ LOG_FIELD(1) == "r" ? 8 $ LOG_FIELD(1) == "S" ? 2 $ toint(0) ]]></expression>
+		</variable>
+
+        <variable name="STREAMID_W_B">
+             <expression><![CDATA[  ARL_CONTAINS_POLICYMAP  ? subfield(mkv_with_del(QUERY_STRING,"path","&"),"/",STREAMID_INDEX) $
+                                            ARL_CONTAINS_LIVE ? subfield(ARL, "/" ,STREAMID_INDEX) $ 0 ]]></expression>
+        </variable>
+        
+        <variable name="IS_STREAM_P" >
+            <expression><![CDATA[ OUTPUT_PIPELINE && !contains(STREAMID_W_B,"-b") ]]></expression>
+        </variable>
+        
+        <variable name="STREAMID" >
+            <expression><![CDATA[ IS_STREAM_P ? STREAMID_W_B $ subfield(STREAMID_W_B , "-" , 0) ]]></expression>
+        </variable>
+    
+        <variable name="IS_ERROR">
+			<expression><![CDATA[ (OUTPUT_PIPELINE && ERROR_MESSAGE != "ERR_NONE" && prefix(ERROR_MESSAGE,4) == "ERR_") ]]></expression>
+        </variable>
+
+        <variable name="CLIENT_DOWNLOAD_ABORTS">
+			<expression><![CDATA[ (OUTPUT_PIPELINE && ERROR_NUMBER == 27 && FF_STATUS_CODE == 200) ]]></expression>
+        </variable>
+
+        <variable name="CLIENT_DOWNLOAD_SUCCESS">
+			<expression><![CDATA[ !(ERROR_NUMBER == 27) ]]></expression>
+        </variable>
+
+        <variable name="FORWARD_SERVER_IP">
+            <expression><![CDATA[ (LOG_FIELD(r-53))]]></expression>
+        </variable>
+
+        <variable name="CLIENT_ASNUM_ITER" >
+			<expression><![CDATA[ OUTPUT_PIPELINE ? netarch_as_origin_get_iter(CLIENT_IP) $ 0]]></expression>
+        </variable>
+
+        <variable name="GHOST_ASNUM_ITER" >
+			<expression><![CDATA[ OUTPUT_PIPELINE ? netarch_as_origin_get_iter(FORWARD_SERVER_IP) $ 0 ]]></expression>
+        </variable>
+
+        <variable name="IS_ORIGIN">
+            <expression><![CDATA[ OUTPUT_PIPELINE && contains_any_of(OBJECT_STATUS,"-o") ]]></expression>
+        </variable>
+
+        <variable name="IS_PARENT">
+            <expression><![CDATA[ OUTPUT_PIPELINE && contains_any_of(OBJECT_STATUS,"p") ]]></expression>
+        </variable>
+
+        <variable name="IS_PEER">
+            <expression><![CDATA[ OUTPUT_PIPELINE && contains_any_of(OBJECT_STATUS,"g")]]></expression>
+        </variable>
+
+        <variable name="ORIGIN_HITS">
+            <expression><![CDATA[ IS_ORIGIN && !(IS_PARENT || IS_PEER) ]]></expression>
+		</variable>
+
+        <variable name="PARENT_HITS">
+            <expression><![CDATA[ IS_PARENT && !(IS_ORIGIN || IS_PEER) ]]></expression>
+		</variable>
+
+        <variable name="PEER_HITS">
+            <expression><![CDATA[ IS_PEER && !(IS_PARENT || IS_ORIGIN) ]]></expression>
+		</variable>
+
+        <variable name="REQUEST_END_TIME">
+                      <expression><![CDATA[tolong(LOG_FIELD(r-4|S-4))]]></expression>
+        </variable>
+
+        <variable name="MSG_TURNAROUND_TIME">
+                      <expression><![CDATA[tolong(LOG_FIELD(r-5|S-5))]]></expression>
+        </variable>
+
+        <variable name="RESPONSE_XFER_TIME">
+                      <expression><![CDATA[tolong(LOG_FIELD(r-6|S-6))]]></expression>
+        </variable>
+
+        <variable name="OBJECT_SIZE">
+            <expression><![CDATA[LOG_FIELD(r-7|S-7) >= 0 ? tolong(LOG_FIELD(r-7|S-7)) $ "-" ]]></expression>
+        </variable>
+
+
+        <variable name="XFER_TIME_RANGE">
+            <expression><![CDATA[( !OUTPUT_PIPELINE ? 0 $
+                (RESPONSE_XFER_TIME >= 0 && RESPONSE_XFER_TIME < 100) ? 0 $
+				(RESPONSE_XFER_TIME >=   100 && RESPONSE_XFER_TIME <   500) ?   100 $
+                (RESPONSE_XFER_TIME >=   500 && RESPONSE_XFER_TIME <  1000) ?   500 $
+				(RESPONSE_XFER_TIME >=  1000 && RESPONSE_XFER_TIME <  2000) ?  1000 $
+                (RESPONSE_XFER_TIME >=  2000 && RESPONSE_XFER_TIME <  4000) ?  2000 $
+				(RESPONSE_XFER_TIME >=  4000 && RESPONSE_XFER_TIME <  6000) ?  4000 $
+				(RESPONSE_XFER_TIME >=  6000 && RESPONSE_XFER_TIME < 10000) ?  6000 $
+				(RESPONSE_XFER_TIME >= 10000 && RESPONSE_XFER_TIME < 20000) ? 10000 $
+				20000)]]>
+			</expression>
+        </variable>
+
+        <variable name="TURNAROUND_TIME_RANGE">
+            <expression><![CDATA[( !OUTPUT_PIPELINE ? 0 $
+                (MSG_TURNAROUND_TIME >= 0 && MSG_TURNAROUND_TIME < 10) ? 0 $
+				(MSG_TURNAROUND_TIME >=   10 && MSG_TURNAROUND_TIME <   50) ?   10 $
+				(MSG_TURNAROUND_TIME >=   50 && MSG_TURNAROUND_TIME <  100) ?   50 $
+				(MSG_TURNAROUND_TIME >=  100 && MSG_TURNAROUND_TIME <  500) ?  100 $
+				(MSG_TURNAROUND_TIME >=  500 && MSG_TURNAROUND_TIME < 1000) ?  500 $
+				(MSG_TURNAROUND_TIME >= 1000 && MSG_TURNAROUND_TIME < 2000) ? 1000 $
+ 				(MSG_TURNAROUND_TIME >= 2000 && MSG_TURNAROUND_TIME < 5000) ? 2000 $
+				5000 ) ]]>
+			</expression>
+        </variable> 
+
+
+        <variable name="OBJECT_SIZE_RANGE">
+            <expression><![CDATA[( !OUTPUT_PIPELINE ? 0 $
+                 OBJECT_SIZE == "-" ? "-" $
+                (OBJECT_SIZE >=         0 && OBJECT_SIZE <   524288) ?     0 $ 
+				(OBJECT_SIZE >=    524288 && OBJECT_SIZE <  1048576) ?   500 $
+                (OBJECT_SIZE >=   1048576 && OBJECT_SIZE <  2097152) ?  1000 $
+                (OBJECT_SIZE >=   2097152 && OBJECT_SIZE <  3145728) ?  2000 $
+                (OBJECT_SIZE >=   3145728 && OBJECT_SIZE <  5242880) ?  3000 $
+                (OBJECT_SIZE >=   5242880 && OBJECT_SIZE < 10485760) ?  5000 $
+                (OBJECT_SIZE >=  10485760 && OBJECT_SIZE < 20971520) ? 10000 $
+                20000 ) ]]>
+			</expression>
+        </variable> 
+
+        
+        <variable name="TOTAL_MSG_TIME">
+            <expression><![CDATA[(MSG_TURNAROUND_TIME + RESPONSE_XFER_TIME + REQUEST_END_TIME) ]]></expression>
+		</variable>
+        
+        <variable name="IS_THROUGHPUT">
+			<expression><![CDATA[ OUTPUT_PIPELINE && (TOTAL_MSG_TIME > 0) && (FF_STATUS_CODE < 300)]]></expression>
+        </variable>
+
+        <variable name="THROUGHPUT_PER_LOG_LINE">
+			<expression><![CDATA[ IS_THROUGHPUT ? ((((FF_HTTP_RESPONSE_BYTES) / TOTAL_MSG_TIME ) / 125) + 0.5) $
+				0]]>
+			</expression>
+        </variable>
+
+        <variable name="TPUT_RANGE">
+            <expression><![CDATA[((THROUGHPUT_PER_LOG_LINE >= 0 && THROUGHPUT_PER_LOG_LINE) < 1 ? 0 $
+                (THROUGHPUT_PER_LOG_LINE >=  1 && THROUGHPUT_PER_LOG_LINE) <  3 ?  1 $
+                (THROUGHPUT_PER_LOG_LINE >=  3 && THROUGHPUT_PER_LOG_LINE) <  5 ?  3 $
+                (THROUGHPUT_PER_LOG_LINE >=  5 && THROUGHPUT_PER_LOG_LINE) <  8 ?  5 $
+                (THROUGHPUT_PER_LOG_LINE >=  8 && THROUGHPUT_PER_LOG_LINE) < 12 ?  8 $
+                (THROUGHPUT_PER_LOG_LINE >= 12 && THROUGHPUT_PER_LOG_LINE) < 20 ? 12 $
+				20)]]>
+			</expression>
+        </variable> 
+
+      <variable name="IS_CACHE_HIT">
+                   <expression><![CDATA[ OUTPUT_PIPELINE && contains_any_of(OBJECT_STATUS, "VW") && contains_any_of(OBJECT_STATUS, "idm") && !contains_any_of(OBJECT_STATUS, "o") ]]></expression>
+       </variable> 
+
+      <variable name="CLIENT_RTT">
+                   <expression><![CDATA[ OUTPUT_PIPELINE && tolong(LOG_FIELD(r-46)) != 0 ? tolong(LOG_FIELD(r-45))/tolong((LOG_FIELD(r-46))) $ 0 ]]></expression>
+       </variable> 
+
+    </locals>
+
+    <!-- #############     DIMENSIONS     ############# -->
+    <!--  2 --> <key name="TIMESTAMP" />
+	<!--  3 --> <key name="FF_CPCODE"/>
+    <!--  5 --> <key name="CLIENT_ASN" >
+                    <value><![CDATA[tolong(iterate(CLIENT_ASNUM_ITER))]]></value>
+                </key>
+    <!--  8 --> <key name="CLIENT_COUNTRY" />
+    <!--  9 --> <key name="CLIENT_CONTINENT" />
+    <!-- 10 --> <key name="GHOST_ASN" >
+                    <value><![CDATA[tolong(iterate(GHOST_ASNUM_ITER))]]></value>
+                </key>
+    <!-- 11 --> <key name="FF_STATUS_CODE"/>
+    <!-- 13 --> <key name="FF_CONTENT_TYPE" />
+    <!-- 14 --> <key name="HTTP_METHD" />
+    <!-- 15 --> <key name="SERVER_REGION" >
+                    <value><![CDATA[region_tree_get(FORWARD_SERVER_IP)]]></value>
+                </key>
+    <!-- 16 --> <key name="CHILD_REGION" >
+                   <value><![CDATA[IS_MIDGRESS && !IS_IP_LOOPBACK ? toint(region_tree_get(CLIENT_IP)) $ toint(0)]]></value>
+                </key>
+    <!-- 17 --> <key name="REQUEST_TYPE" >
+                   <value><![CDATA[IS_MIDGRESS ? "midgress" $ "egress"]]></value>
+                </key>
+    <!-- 19 --> <key name="tostring(OBJECT_SIZE_RANGE)"/>
+    <!-- 20 --> <key name="EDC_DEVICE_TYPE" >
+                    <value><![CDATA[EDGE_DEVICE_CHARATERISTICS(is_tablet) == "true" ? "tablet" $ (EDGE_DEVICE_CHARATERISTICS(is_mobile) =="true" ? "mobile" $ "others")
+					]]></value>
+                </key>
+    <!-- 21 --> <key name="OS" >
+                    <value><![CDATA[EDGE_DEVICE_CHARATERISTICS(device_os)]]></value>
+                </key>
+    <!-- 22 --> <key name="FF_MA_FILE_EXTENSION"/>
+    <!-- 23 --> <key name="toint(STREAMID)" />
+	
+    <!-- #############     METRICS     ############# -->
+
+    <!-- 38 --> <data name="REQUEST_END_TIME"   aggregation="SUM"        />
+    <!-- 39 --> <data name="MSG_TURNAROUND_TIME"   aggregation="SUM"        />
+    <!-- 40 --> <data name="RESPONSE_XFER_TIME"   aggregation="SUM"        />
+    <!-- 42 --> <data name="TOTAL_BYTES"   aggregation="SUM"        >
+					<value><![CDATA[tolong(LOG_FIELD(r-9|S-9))]]></value>
+                </data>
+    <!-- 46 --> <data name="TOTAL_DOWNLOAD_TIME"   aggregation="SUM"        >
+                    <value><![CDATA[(IS_EDGEHIT == 1) ? (((TOTAL_MSG_TIME) > 86400000) ? 0 $ 
+                                    (TOTAL_MSG_TIME)) $ 0]]></value>
+				</data>
+    <!-- 47 --> <data name="HIT_COUNT"   aggregation="SUM"        />
+    <!-- 48 --> <data name="CLIENT_DOWNLOAD_ABORTS"   aggregation="SUM"        />
+    <!-- 49 --> <data name="CLIENT_DOWNLOAD_SUCCESS"   aggregation="SUM"        />
+    <!-- 50 --> <data name="ORIGIN_HITS"   aggregation="SUM"        />
+    <!-- 51 --> <data name="PARENT_HITS"   aggregation="SUM"        />
+    <!-- 52 --> <data name="PEER_HITS"   aggregation="SUM"        />
+    <!-- 53 --> <data name="CACHE_HITS"   aggregation="SUM"        >
+					<value><![CDATA[IS_CACHE_HIT ? HIT_COUNT $ 0]]></value>
+				</data>
+    <!-- 54 --> <data name="ERRORS"   aggregation="SUM"        >
+					<value><![CDATA[(FF_STATUS_CODE >= 400 || FF_STATUS_CODE < 200 || IS_ERROR )  ? 1  $ 0]]></value>
+				</data>
+    <!-- 55 --> <data name="ORIGIN_ERRORS"   aggregation="SUM"        >
+					<value><![CDATA[ IS_ORIGIN && (FF_STATUS_CODE >= 400 || FF_STATUS_CODE < 200 || IS_ERROR) ? 1 $ 0]]></value>
+				</data>
+    <!-- 56 --> <data name="FORWARD_ERROR"   aggregation="SUM"        >
+					<value><![CDATA[IS_ERROR ? 1 $ 0]]></value>
+                </data>
+    <!-- 57 --> <data name="THROUGHPUT_PER_LOG_LINE"   aggregation="SUM"        />
+    <!-- 58 --> <data name="IS_THROUGHPUT"   aggregation="SUM"        />
+    <!-- 82 --> <data name="TPUT_RANGE_LT_1"                  aggregation="SUM"                          >
+					<value><![CDATA[TPUT_RANGE == 0 ? HIT_COUNT $ 0]]></value>
+				</data>
+    <!-- 83 --> <data name="TPUT_RANGE_1_TO_2"                  aggregation="SUM"                          >
+					<value><![CDATA[TPUT_RANGE == 1 ? HIT_COUNT $ 0]]></value>
+				</data>
+    <!-- 84 --> <data name="TPUT_RANGE_3_TO_4"                  aggregation="SUM"                          >
+					<value><![CDATA[TPUT_RANGE == 3 ? HIT_COUNT $ 0]]></value>
+				</data>
+    <!-- 85 --> <data name="TPUT_RANGE_5_TO_7"                  aggregation="SUM"                          >
+					<value><![CDATA[TPUT_RANGE == 5 ? HIT_COUNT $ 0]]></value>
+				</data>
+    <!-- 86 --> <data name="TPUT_RANGE_8_TO_11"                  aggregation="SUM"                          >
+					<value><![CDATA[TPUT_RANGE == 8 ? HIT_COUNT $ 0]]></value>
+				</data>
+    <!-- 87 --> <data name="TPUT_RANGE_12_TO_19"                  aggregation="SUM"                          >
+					<value><![CDATA[TPUT_RANGE == 12 ? HIT_COUNT $ 0]]></value>
+				</data>
+    <!-- 88 --> <data name="TPUT_RANGE_GT_20"                  aggregation="SUM"                          >
+					<value><![CDATA[TPUT_RANGE == 20 ? HIT_COUNT $ 0]]></value>
+				</data>
+    <!--  FILTER  -->
+
+    <select><![CDATA[ OUTPUT_PIPELINE ]]></select>
+    
+</pipeline>
+
